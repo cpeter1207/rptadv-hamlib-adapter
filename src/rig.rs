@@ -54,6 +54,27 @@ pub(crate) fn status(result: i32) -> Result<(), Error> {
     }
 }
 
+/// Reject native readings that cannot be represented as exact positive hertz.
+pub(crate) fn integer_frequency(frequency: f64) -> Result<u64, Error> {
+    if !frequency.is_finite()
+        || frequency <= 0.0
+        || frequency > (1_u64 << 53) as f64
+        || frequency.fract() != 0.0
+    {
+        return Err(Error::InvalidState);
+    }
+    Ok(frequency as u64)
+}
+
+/// Only Hamlib's documented PTT observations can confirm the physical state.
+fn observed_ptt(value: raw::ptt_t) -> Result<bool, Error> {
+    match value {
+        raw::RIG_PTT_OFF => Ok(false),
+        raw::RIG_PTT_ON | raw::RIG_PTT_ON_MIC | raw::RIG_PTT_ON_DATA => Ok(true),
+        _ => Err(Error::InvalidState),
+    }
+}
+
 /// Owned Hamlib rig, created, used and closed by one non-audio worker.
 pub struct Rig {
     handle: Option<NonNull<raw::RIG>>,
@@ -241,14 +262,7 @@ impl Rig {
         let mut frequency = 0.0;
         // SAFETY: the owner provides a complete writable frequency result.
         status(unsafe { raw::rig_get_freq(handle, raw::RPTADV_VFO_CURRENT, &mut frequency) })?;
-        if !frequency.is_finite()
-            || frequency <= 0.0
-            || frequency > (1_u64 << 53) as f64
-            || frequency.fract() != 0.0
-        {
-            return Err(Error::InvalidState);
-        }
-        Ok(frequency as u64)
+        integer_frequency(frequency)
     }
 
     /// Apply PTT only when this adapter is its explicitly selected source.
@@ -282,11 +296,7 @@ impl Rig {
         let mut keyed = raw::RIG_PTT_OFF;
         // SAFETY: the current owner supplies the writable native enum.
         status(unsafe { raw::rig_get_ptt(handle, raw::RPTADV_VFO_CURRENT, &mut keyed) })?;
-        match keyed {
-            raw::RIG_PTT_OFF => Ok(false),
-            raw::RIG_PTT_ON | raw::RIG_PTT_ON_MIC | raw::RIG_PTT_ON_DATA => Ok(true),
-            _ => Err(Error::InvalidState),
-        }
+        observed_ptt(keyed)
     }
 
     /// Stop this adapter's PTT, close transport, then release frontend state.
@@ -324,3 +334,7 @@ impl Drop for Rig {
         let _ = self.close();
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests;
