@@ -123,15 +123,30 @@ impl Rig {
                 .copied()
                 .filter(|(name, _)| !matches!(*name, "timeout" | "retry" | "timeout_retry")),
         ) {
-            let name = CString::new(name).map_err(|_| Error::InvalidOption)?;
-            let value = CString::new(value).map_err(|_| Error::InvalidOption)?;
-            // SAFETY: the unique setup owner lends NUL-terminated configuration strings.
-            let token = unsafe { raw::rig_token_lookup(handle.as_ptr(), name.as_ptr()) };
-            if token == 0 {
-                return Err(Error::InvalidOption);
-            }
-            status(unsafe { raw::rig_set_conf(handle.as_ptr(), token, value.as_ptr()) })?;
+            rig.option(name, value)?;
         }
+        // This adapter's existing owner performs every poll. Hamlib otherwise
+        // starts a background poller at open which also overwrites cache policy.
+        // Disable its unsolicited/network workers before any can be started.
+        // SAFETY: only this setup owner retains the unopened rig and its cache.
+        let cache_timeout =
+            unsafe { raw::rig_get_cache_timeout_ms(handle.as_ptr(), raw::HAMLIB_CACHE_ALL) };
+        if cache_timeout < 0 {
+            return Err(Error::Backend(cache_timeout));
+        }
+        for (name, value) in [
+            ("poll_interval", "0"),
+            ("async", "0"),
+            ("multicast_data_addr", "0.0.0.0"),
+            ("multicast_cmd_addr", "0.0.0.0"),
+        ] {
+            rig.option(name, value)?;
+        }
+        // SAFETY: setting poll_interval also changes this live rig's cache;
+        // preserve the caller/default policy without creating another owner.
+        status(unsafe {
+            raw::rig_set_cache_timeout_ms(handle.as_ptr(), raw::HAMLIB_CACHE_ALL, cache_timeout)
+        })?;
         // SAFETY: the current owner exclusively retains the configured handle.
         let result = {
             let _guard = FRONTEND
@@ -151,12 +166,23 @@ impl Rig {
         // Network open may import the server's timeout. Reapply the explicitly
         // configured transport policy to this handle after capability negotiation.
         for (name, value) in transport {
-            let name = CString::new(name).map_err(|_| Error::InvalidOption)?;
-            let value = CString::new(value).map_err(|_| Error::InvalidOption)?;
-            let token = unsafe { raw::rig_token_lookup(handle.as_ptr(), name.as_ptr()) };
-            status(unsafe { raw::rig_set_conf(handle.as_ptr(), token, value.as_ptr()) })?;
+            rig.option(name, value)?;
         }
         Ok(rig)
+    }
+
+    /// Apply a frontend option on its sole owner before transport use.
+    fn option(&self, name: &str, value: &str) -> Result<(), Error> {
+        let handle = self.pointer()?;
+        let name = CString::new(name).map_err(|_| Error::InvalidOption)?;
+        let value = CString::new(value).map_err(|_| Error::InvalidOption)?;
+        // SAFETY: the owner retains its rig and both NUL-terminated strings.
+        let token = unsafe { raw::rig_token_lookup(handle, name.as_ptr()) };
+        if token == 0 {
+            return Err(Error::InvalidOption);
+        }
+        // SAFETY: the token belongs to this rig and value lives through return.
+        status(unsafe { raw::rig_set_conf(handle, token, value.as_ptr()) })
     }
 
     /// Configured timeout times attempts for one transport exchange. A complete

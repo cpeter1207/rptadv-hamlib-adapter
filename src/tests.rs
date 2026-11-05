@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn hamlib_control_owner_opens_without_a_native_poll_worker() {
+    for options in [
+        vec![],
+        vec![
+            ("poll_interval", "1000"),
+            ("async", "1"),
+            ("cache_timeout", "173"),
+        ],
+    ] {
+        let rig = Rig::open("RIG_MODEL_DUMMY", &options).unwrap();
+        let handle = rig.pointer().unwrap();
+        // SAFETY: the sole rig owner retains this native state through all reads.
+        let state = unsafe {
+            &*raw::rig_data_pointer(handle, raw::RIG_PTRX_STATE).cast::<raw::rig_state>()
+        };
+        assert_eq!(state.poll_interval, 0);
+        assert!(state.poll_routine_priv_data.is_null());
+        assert_eq!(state.async_data_enabled, 0);
+        if !options.is_empty() {
+            // SAFETY: the same retained rig owns this explicitly configured cache.
+            assert_eq!(
+                unsafe { raw::rig_get_cache_timeout_ms(handle, raw::HAMLIB_CACHE_ALL) },
+                173
+            );
+        }
+    }
+}
+
+#[test]
 fn hamlib_fresh_read_restores_cache_after_success_and_failure() {
     let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
     let handle = rig.pointer().unwrap();
