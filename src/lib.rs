@@ -1,6 +1,7 @@
 //! Versioned adapter to released Hamlib; no owned policy or PCM processing.
 
 #![deny(warnings)]
+#![cfg_attr(coverage, feature(coverage_attribute))]
 
 #[allow(
     non_camel_case_types,
@@ -26,4 +27,5 @@ mod ffi;
 pub use ffi::rptadv_hamlib_api_v1;
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests;
