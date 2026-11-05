@@ -3,7 +3,7 @@
 use crate::raw;
 use std::{
     ffi::CString,
-    ptr::NonNull,
+    ptr::{self, NonNull},
     sync::{Mutex, Once},
 };
 
@@ -78,6 +78,9 @@ fn observed_ptt(value: raw::ptt_t) -> Result<bool, Error> {
 /// Owned Hamlib rig, created, used and closed by one non-audio worker.
 pub struct Rig {
     handle: Option<NonNull<raw::RIG>>,
+    // Hamlib frontend options mutate caps->ptt_type. Own a copy so transport
+    // setup cannot change another rig's defaults; retain it through cleanup.
+    _capabilities: Box<raw::rig_caps>,
     // Native identity avoids installing a Rust TLS destructor whose code might
     // be unloaded after the final rig closes but before this worker exits.
     owner: libc::pthread_t,
@@ -111,7 +114,7 @@ impl Rig {
             .find(|(name, value)| *name == model && *value != 0)
             .map(|(_, value)| *value)
             .ok_or(Error::UnknownModel)?;
-        let handle = {
+        let (handle, capabilities) = {
             let _guard = FRONTEND
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -119,10 +122,17 @@ impl Rig {
             // contain credentials. The adapter returns original numeric errors.
             DEBUG_INIT.call_once(|| unsafe { raw::rig_set_debug(raw::RIG_DEBUG_NONE) });
             // SAFETY: frontend initialization is serialized; id comes from installed headers.
-            NonNull::new(unsafe { raw::rig_init(id) }).ok_or(Error::UnknownModel)?
+            let handle = NonNull::new(unsafe { raw::rig_init(id) }).ok_or(Error::UnknownModel)?;
+            // SAFETY: rig_init succeeded with a registered model and its complete
+            // caps. Metadata pointers are library-owned; the copied record lives
+            // until after this rig's cleanup. No native handle is shared yet.
+            let mut capabilities = Box::new(unsafe { *(*handle.as_ptr()).caps });
+            unsafe { (*handle.as_ptr()).caps = ptr::from_mut(&mut *capabilities) };
+            (handle, capabilities)
         };
         let mut rig = Self {
             handle: Some(handle),
+            _capabilities: capabilities,
             // SAFETY: pthread_self returns this live native owner's identity.
             owner: unsafe { libc::pthread_self() },
             opened: false,

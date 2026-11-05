@@ -55,7 +55,8 @@ fn main() {
         .allowlist_var("RPTADV_.*")
         .allowlist_type("rig_caps")
         .allowlist_type("rig_state")
-        .opaque_type("s_rig")
+        // The private owner installs a per-rig copy of public capabilities;
+        // generate this layout from the exact installed headers as well.
         .prepend_enum_name(false)
         .layout_tests(false)
         .generate_comments(false)

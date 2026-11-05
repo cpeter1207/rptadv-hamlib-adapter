@@ -66,3 +66,28 @@ fn physical_ptt_observations_reject_unknown_native_values() {
     }
     assert_eq!(observed_ptt(u32::MAX), Err(Error::InvalidState));
 }
+
+#[test]
+fn transport_ptt_override_does_not_change_another_rigs_model_default() {
+    fn selected(rig: &Rig) -> u32 {
+        // SAFETY: this test only observes its own retained initialized port.
+        unsafe {
+            (*raw::rig_data_pointer(rig.pointer().unwrap(), raw::RIG_PTRX_PTTPORT)
+                .cast::<raw::hamlib_port_t>())
+            .type_
+            .ptt
+        }
+    }
+    let first = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    let baseline = selected(&first);
+    let changed = if baseline == raw::RIG_PTT_NONE {
+        "RIG"
+    } else {
+        "None"
+    };
+    let override_rig = Rig::open("RIG_MODEL_DUMMY", &[("ptt_type", changed)]).unwrap();
+    assert_ne!(selected(&override_rig), baseline);
+    let later = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    assert_eq!(selected(&later), baseline);
+    assert_eq!(selected(&first), baseline);
+}
