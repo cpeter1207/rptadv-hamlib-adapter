@@ -67,12 +67,32 @@ enum rptadv_hamlib_selectors {
   RPTADV_HAMLIB_CARRIER_DETECT = 21 /**< Rig carrier observation. */
 };
 
+/** Scalar kinds, separate from native flags and decimal precision. */
+enum rptadv_hamlib_value_kind {
+  RPTADV_HAMLIB_BOOLEAN = 1, /**< Exactly zero or one. */
+  RPTADV_HAMLIB_UNSIGNED = 2, /**< Nonnegative integer. */
+  RPTADV_HAMLIB_SIGNED = 3, /**< Signed integer. */
+  RPTADV_HAMLIB_DECIMAL = 4, /**< Fixed-point decimal. */
+  RPTADV_HAMLIB_ENUMERATION = 5 /**< Declared selector. */
+};
+/** Scalar units; normalized gain ratios are not decibels. */
+enum rptadv_hamlib_value_unit {
+  RPTADV_HAMLIB_UNIT_NONE = 0, /**< Boolean or enum. */
+  RPTADV_HAMLIB_UNIT_HERTZ = 1, /**< Hertz, with declared precision. */
+  RPTADV_HAMLIB_UNIT_MILLIWATTS = 2, /**< Milliwatts. */
+  RPTADV_HAMLIB_UNIT_DCS = 3, /**< Nine bits; display three octal digits. */
+  RPTADV_HAMLIB_UNIT_DECIBELS = 4, /**< Decibels. */
+  RPTADV_HAMLIB_UNIT_WPM = 5, /**< Words per minute. */
+  RPTADV_HAMLIB_UNIT_RATIO = 6 /**< Full-scale ratio. */
+};
 /** One copied capability. Missing getters never imply successful readback. */
 typedef struct rptadv_hamlib_setting {
   size_t struct_size;        /**< Exact record size supplied by caller. */
   uint32_t selector;         /**< Stable adapter-neutral setting. */
   uint32_t access;           /**< Bit 0 readable; bit 1 writable. */
   rptadv_hamlib_string name; /**< Stable ASCII name, localized by caller. */
+  uint32_t value_kind;       /**< One rptadv_hamlib_value_kind. */
+  uint32_t units;            /**< One rptadv_hamlib_value_unit. */
   uint32_t decimal_places;   /**< Value is integer / 10^decimal_places. */
   uint32_t reserved;         /**< Zero. */
   int64_t minimum;           /**< Inclusive lower bound. */

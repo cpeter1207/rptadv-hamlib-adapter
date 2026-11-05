@@ -91,6 +91,42 @@ pub enum Setting {
     XitEnabled = 308,
 }
 
+/// Scalar interpretation, independent of native flags.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ValueKind {
+    /// Exactly zero or one; negative zero is not a boolean input.
+    Boolean = 1,
+    /// Nonnegative integral value in the declared units.
+    Unsigned = 2,
+    /// Signed integral value in the declared units.
+    Signed = 3,
+    /// Fixed-point value using the declared decimal precision.
+    Decimal = 4,
+    /// One declared discrete selector, never a native bit mask.
+    Enumeration = 5,
+}
+
+/// Units used to format and validate a value; normalized controls are not dB.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ValueUnit {
+    /// Dimensionless boolean or enum selector.
+    None = 0,
+    /// Hertz, with decimal precision for CTCSS.
+    Hertz = 1,
+    /// Milliwatts.
+    Milliwatts = 2,
+    /// Actual nine-bit DCS code, conventionally displayed as three octal digits.
+    DcsCode = 3,
+    /// Decibels.
+    Decibels = 4,
+    /// Words per minute.
+    WordsPerMinute = 5,
+    /// Dimensionless full-scale ratio, commonly represented in millionths.
+    Ratio = 6,
+}
+
 /// Complete non-native catalog entry, copied while the owner has exclusive access.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SettingInfo {
@@ -102,6 +138,10 @@ pub struct SettingInfo {
     pub readable: bool,
     /// True when an actual setter exists.
     pub writable: bool,
+    /// Scalar value kind, separate from access and precision.
+    pub value_kind: ValueKind,
+    /// Physical/control units.
+    pub units: ValueUnit,
     /// Decimal places represented by the integer value.
     pub decimal_places: u32,
     /// Inclusive lower bound.
@@ -117,6 +157,25 @@ enum Native {
     Operation(raw::rig_function_e, raw::rig_function_e),
     Level(&'static CStr, bool),
     Function(&'static CStr),
+}
+
+pub(crate) fn operation_capabilities(
+    setting: Setting,
+    read: raw::rig_function_e,
+    write: raw::rig_function_e,
+    has: impl Fn(raw::rig_function_e) -> bool,
+) -> (bool, bool) {
+    let readable = read != u32::MAX && has(read);
+    let writable = write != u32::MAX && has(write);
+    if setting == Setting::Offset {
+        // A shift without its magnitude (or vice versa) is not an offset control.
+        (
+            readable && has(raw::RIG_FUNCTION_GET_RPTR_SHIFT),
+            writable && has(raw::RIG_FUNCTION_SET_RPTR_SHIFT),
+        )
+    } else {
+        (readable, writable)
+    }
 }
 
 /// One negotiated rig coverage interval; masks reserve bit zero and shift by selector.
@@ -184,6 +243,45 @@ const SETTINGS: &[Setting] = &[
 ];
 
 impl Setting {
+    fn value_type(self) -> (ValueKind, ValueUnit) {
+        use ValueKind as K;
+        use ValueUnit as U;
+        match self {
+            Self::ReceiveFrequency
+            | Self::TransmitFrequency
+            | Self::Bandwidth
+            | Self::NotchFrequency => (K::Unsigned, U::Hertz),
+            Self::Offset | Self::Rit | Self::Xit | Self::IfShift => (K::Signed, U::Hertz),
+            Self::Power => (K::Unsigned, U::Milliwatts),
+            Self::TransmitCtcss | Self::ReceiveCtcss => (K::Decimal, U::Hertz),
+            Self::TransmitDcs | Self::ReceiveDcs => (K::Unsigned, U::DcsCode),
+            Self::Mode | Self::ReceiveVfo | Self::TransmitVfo | Self::Agc | Self::Antenna => {
+                (K::Enumeration, U::None)
+            }
+            Self::Preamp | Self::Attenuator => (K::Unsigned, U::Decibels),
+            Self::KeyerSpeed => (K::Unsigned, U::WordsPerMinute),
+            Self::AfGain
+            | Self::RfGain
+            | Self::MicrophoneGain
+            | Self::Squelch
+            | Self::Compression
+            | Self::NoiseReductionLevel => (K::Decimal, U::Ratio),
+            Self::Split
+            | Self::TransmitToneEnabled
+            | Self::ReceiveToneEnabled
+            | Self::Ptt
+            | Self::CarrierDetect
+            | Self::NoiseBlanker
+            | Self::NoiseReduction
+            | Self::AutomaticNotch
+            | Self::ManualNotch
+            | Self::Compressor
+            | Self::Tuner
+            | Self::Monitor
+            | Self::RitEnabled
+            | Self::XitEnabled => (K::Boolean, U::None),
+        }
+    }
     /// Reject unknown selectors rather than exposing native enum values.
     pub fn from_selector(selector: u32) -> Result<Self, Error> {
         SETTINGS
@@ -360,7 +458,8 @@ impl Rig {
                             && !unsafe { raw::rig_get_function_ptr(self.model, operation) }
                                 .is_null()
                     };
-                    (has(read), has(write), false)
+                    let (readable, writable) = operation_capabilities(setting, read, write, has);
+                    (readable, writable, false)
                 }
                 Native::Level(name, normalized) => {
                     let level = unsafe { raw::rig_parse_level(name.as_ptr()) };
@@ -509,6 +608,8 @@ impl Rig {
                 name,
                 readable,
                 writable,
+                value_kind: setting.value_type().0,
+                units: setting.value_type().1,
                 decimal_places: if normalized {
                     6
                 } else if matches!(setting, Setting::TransmitCtcss | Setting::ReceiveCtcss) {

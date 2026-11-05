@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn hamlib_offset_capability_requires_shift_and_magnitude_operations() {
+    let capability = |missing| {
+        crate::catalog::operation_capabilities(
+            Setting::Offset,
+            raw::RIG_FUNCTION_GET_RPTR_OFFS,
+            raw::RIG_FUNCTION_SET_RPTR_OFFS,
+            |operation| operation != missing,
+        )
+    };
+    let complete = capability(u32::MAX);
+    assert_eq!(complete, (true, true));
+    assert_eq!(capability(raw::RIG_FUNCTION_GET_RPTR_SHIFT), (false, true));
+    assert_eq!(capability(raw::RIG_FUNCTION_SET_RPTR_SHIFT), (true, false));
+    assert_eq!(
+        crate::catalog::operation_capabilities(
+            Setting::CarrierDetect,
+            raw::RIG_FUNCTION_GET_DCD,
+            u32::MAX,
+            |_| true
+        ),
+        (true, false)
+    );
+}
+
+#[test]
+fn hamlib_catalog_declares_value_types_and_units() {
+    use crate::catalog::{ValueKind as K, ValueUnit as U};
+    let rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    let entries = rig.catalog().unwrap();
+    for (setting, kind, units, places) in [
+        (Setting::ReceiveFrequency, K::Unsigned, U::Hertz, 0),
+        (Setting::Offset, K::Signed, U::Hertz, 0),
+        (Setting::Mode, K::Enumeration, U::None, 0),
+        (Setting::Split, K::Boolean, U::None, 0),
+        (Setting::TransmitCtcss, K::Decimal, U::Hertz, 1),
+        (Setting::TransmitDcs, K::Unsigned, U::DcsCode, 0),
+        (Setting::Power, K::Unsigned, U::Milliwatts, 0),
+        (Setting::AfGain, K::Decimal, U::Ratio, 6),
+        (Setting::Preamp, K::Unsigned, U::Decibels, 0),
+        (Setting::KeyerSpeed, K::Unsigned, U::WordsPerMinute, 0),
+    ] {
+        let item = entries
+            .iter()
+            .find(|entry| entry.setting == setting)
+            .unwrap();
+        assert_eq!(
+            (item.value_kind, item.units, item.decimal_places),
+            (kind, units, places)
+        );
+    }
+}
+
+#[test]
 fn hamlib_dummy_supports_typed_roundtrip() {
     let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
     rig.set_frequency(146_520_000).unwrap();
@@ -199,13 +252,13 @@ fn hamlib_transport_error_preserves_first_cause() {
     use std::{
         io::Read,
         net::{Shutdown, TcpListener},
-        time::{Duration, Instant},
+        time::Duration,
     };
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap().to_string();
     listener.set_nonblocking(true).unwrap();
+    let (finished, client_finished) = std::sync::mpsc::sync_channel(1);
     let server = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             match listener.accept() {
                 Ok((mut stream, _)) => {
@@ -217,11 +270,17 @@ fn hamlib_transport_error_preserves_first_cause() {
                     stream.shutdown(Shutdown::Both).unwrap();
                     return;
                 }
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::WouldBlock
-                        && Instant::now() < deadline =>
-                {
-                    std::thread::sleep(Duration::from_millis(1))
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Other fixtures may own Hamlib's frontend lifecycle lock.
+                    // Wait for this client's result, not time spent before open.
+                    assert!(
+                        matches!(
+                            client_finished.try_recv(),
+                            Err(std::sync::mpsc::TryRecvError::Empty)
+                        ),
+                        "loopback client finished without connecting"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
                 }
                 Err(error) => panic!("loopback fixture did not connect: {error}"),
             }
@@ -236,6 +295,7 @@ fn hamlib_transport_error_preserves_first_cause() {
             ("timeout_retry", "0"),
         ],
     );
+    let _ = finished.send(());
     assert!(matches!(result, Err(Error::Backend(code)) if code < 0));
     server.join().unwrap();
     // Failed setup/cleanup must neither overwrite the cause nor poison the next owner.
