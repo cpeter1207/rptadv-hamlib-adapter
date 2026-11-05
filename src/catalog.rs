@@ -524,8 +524,7 @@ impl Rig {
         Ok(result)
     }
 
-    /// Set one capability-validated typed scalar; host policy validates RF safety first.
-    pub fn set(&mut self, setting: Setting, value: i64) -> Result<(), Error> {
+    fn validate_value(&self, setting: Setting, value: i64) -> Result<(), Error> {
         let info = self
             .catalog()?
             .into_iter()
@@ -538,6 +537,84 @@ impl Rig {
         {
             return Err(Error::InvalidState);
         }
+        Ok(())
+    }
+
+    /// Set mode/passband from complete desired state, without requiring readback.
+    pub fn set_mode_width(&mut self, mode: i64, width: u32) -> Result<(), Error> {
+        self.validate_value(Setting::Mode, mode)?;
+        self.validate_value(Setting::Bandwidth, i64::from(width))?;
+        let handle = self.pointer()?;
+        let mode = native_mode(mode)?;
+        // SAFETY: this rig has one owner; values are admitted by its catalog.
+        unsafe {
+            let width = if width == 0 {
+                raw::rig_passband_normal(handle, mode)
+            } else {
+                i64::from(width)
+            };
+            status(raw::rig_set_mode(
+                handle,
+                raw::RPTADV_VFO_CURRENT,
+                mode,
+                width,
+            ))
+        }
+    }
+
+    /// Set split routing from complete desired VFO state, without a getter.
+    pub fn set_split_vfos(
+        &mut self,
+        receive: i64,
+        enabled: bool,
+        transmit: i64,
+    ) -> Result<(), Error> {
+        self.validate_value(Setting::ReceiveVfo, receive)?;
+        self.validate_value(Setting::TransmitVfo, transmit)?;
+        self.validate_value(Setting::Split, i64::from(enabled))?;
+        // SAFETY: native VFO selectors are validated and the rig is uniquely owned.
+        status(unsafe {
+            raw::rig_set_split_vfo(
+                self.pointer()?,
+                native_vfo(receive)?,
+                u32::from(enabled),
+                native_vfo(transmit)?,
+            )
+        })
+    }
+
+    /// Convert absolute RF power using the caller's effective TX frequency/mode.
+    /// This does not fabricate readback or use the possibly different RX frequency.
+    pub fn set_power_mw(&mut self, power: u32, transmit_hz: u64, mode: i64) -> Result<(), Error> {
+        self.validate_value(Setting::Power, i64::from(power))?;
+        if transmit_hz == 0 || transmit_hz > 1_u64 << 53 {
+            return Err(Error::InvalidState);
+        }
+        let handle = self.pointer()?;
+        let mode = native_mode(mode)?;
+        let mut normalized = 0.0;
+        // SAFETY: the conversion and write use one retained rig and stack output.
+        unsafe {
+            status(raw::rig_mW2power(
+                handle,
+                &mut normalized,
+                power,
+                transmit_hz as f64,
+                mode,
+            ))?;
+            status(raw::rig_set_level(
+                handle,
+                raw::RPTADV_VFO_CURRENT,
+                raw::rig_parse_level(c"RFPOWER".as_ptr()),
+                raw::value_t { f: normalized },
+            ))
+        }
+    }
+
+    /// Set one scalar. Mode/passband, split and power require readable companion
+    /// state; complete-state callers use the grouped operations for write-only rigs.
+    pub fn set(&mut self, setting: Setting, value: i64) -> Result<(), Error> {
+        self.validate_value(setting, value)?;
         let handle = self.pointer()?;
         let vfo = raw::RPTADV_VFO_CURRENT;
         // SAFETY: all calls use the sole owner and native values validated above;

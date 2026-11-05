@@ -52,6 +52,22 @@ fn hamlib_dummy_roundtrips_operating_catalog() {
 }
 
 #[test]
+fn hamlib_complete_writes_take_their_companion_state_from_the_caller() {
+    let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    rig.set_frequency(146_520_000).unwrap();
+    rig.set_mode_width(3, 2400).unwrap();
+    assert_eq!(rig.get(Setting::Mode).unwrap(), 3);
+    assert_eq!(rig.get(Setting::Bandwidth).unwrap(), 2400);
+    rig.set_split_vfos(1, true, 2).unwrap();
+    assert_eq!(rig.get(Setting::Split).unwrap(), 1);
+    assert_eq!(rig.get(Setting::TransmitVfo).unwrap(), 2);
+    rig.set_power_mw(5000, 146_520_000, 1).unwrap();
+    assert!(rig.set_mode_width(99, 2400).is_err());
+    assert!(rig.set_split_vfos(99, true, 2).is_err());
+    assert!(rig.set_power_mw(5000, 0, 1).is_err());
+}
+
+#[test]
 fn hamlib_rejects_unsupported_capability_before_mutation() {
     let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
     rig.set_frequency(146_520_000).unwrap();
