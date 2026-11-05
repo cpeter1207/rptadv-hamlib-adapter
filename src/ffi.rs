@@ -161,11 +161,7 @@ unsafe extern "C" fn open(config: *const Config, out: *mut *mut c_void) -> i32 {
     }
     // SAFETY: the exact complete record size was admitted above.
     let config = unsafe { &*config };
-    if config.struct_size != mem::size_of::<Config>()
-        || config.abi_version != 1
-        || config.reserved != 0
-        || config.reserved2 != 0
-    {
+    if config.abi_version != 1 || config.reserved != 0 || config.reserved2 != 0 {
         return -1003;
     }
     code((|| {
@@ -406,3 +402,7 @@ static API: Api = Api {
 pub extern "C" fn rptadv_hamlib_api_v1() -> *const Api {
     &API
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests;
