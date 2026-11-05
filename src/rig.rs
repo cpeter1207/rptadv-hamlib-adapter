@@ -5,7 +5,6 @@ use std::{
     ffi::CString,
     ptr::NonNull,
     sync::{Mutex, Once},
-    thread::{self, ThreadId},
 };
 
 include!(concat!(env!("OUT_DIR"), "/models.rs"));
@@ -58,7 +57,9 @@ pub(crate) fn status(result: i32) -> Result<(), Error> {
 /// Owned Hamlib rig, created, used and closed by one non-audio worker.
 pub struct Rig {
     handle: Option<NonNull<raw::RIG>>,
-    owner: ThreadId,
+    // Native identity avoids installing a Rust TLS destructor whose code might
+    // be unloaded after the final rig closes but before this worker exits.
+    owner: libc::pthread_t,
     opened: bool,
     owns_ptt: bool,
     pub(crate) model: u32,
@@ -101,7 +102,8 @@ impl Rig {
         };
         let mut rig = Self {
             handle: Some(handle),
-            owner: thread::current().id(),
+            // SAFETY: pthread_self returns this live native owner's identity.
+            owner: unsafe { libc::pthread_self() },
             opened: false,
             owns_ptt: false,
             model: id,
@@ -164,7 +166,8 @@ impl Rig {
     }
 
     pub(crate) fn pointer(&self) -> Result<*mut raw::RIG, Error> {
-        if thread::current().id() != self.owner {
+        // SAFETY: the recorded owner is the still-retained creating pthread.
+        if unsafe { libc::pthread_equal(libc::pthread_self(), self.owner) } == 0 {
             return Err(Error::WrongThread);
         }
         self.handle.map(NonNull::as_ptr).ok_or(Error::InvalidState)

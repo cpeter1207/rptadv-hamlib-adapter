@@ -116,6 +116,20 @@ fn hamlib_independent_rigs_do_not_share_operating_state() {
 }
 
 #[test]
+fn hamlib_owner_check_rejects_a_different_native_thread() {
+    let rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    let borrowed = std::ptr::from_ref(&rig) as usize;
+    let result = std::thread::spawn(move || {
+        // SAFETY: the original owner waits for this joined diagnostic and never
+        // mutates the handle. The rejected call reads only immutable owner identity.
+        unsafe { (*(borrowed as *const Rig)).pointer() }.map(|_| ())
+    })
+    .join()
+    .unwrap();
+    assert_eq!(result, Err(Error::WrongThread));
+}
+
+#[test]
 fn hamlib_catalog_uses_native_discrete_and_fractional_constraints() {
     let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
     let catalog = rig.catalog().unwrap();

@@ -190,6 +190,7 @@ name = "rptadv-hamlib-adapter"
 version = "0.1.0-alpha.1"
 dependencies = [
  "bindgen",
+ "libc",
 ]
 
 [[package]]
