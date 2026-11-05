@@ -173,6 +173,28 @@ impl Rig {
         self.handle.map(NonNull::as_ptr).ok_or(Error::InvalidState)
     }
 
+    /// Query the physical backend rather than Hamlib's recent setter cache.
+    /// Cache policy belongs to this rig and is restored even on a read error.
+    pub(crate) fn fresh_read<T>(
+        &mut self,
+        read: impl FnOnce(&mut Self) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let handle = self.pointer()?;
+        // SAFETY: only this owner accesses the retained rig and its cache policy.
+        let previous = unsafe { raw::rig_get_cache_timeout_ms(handle, raw::HAMLIB_CACHE_ALL) };
+        if previous < 0 {
+            return Err(Error::Backend(previous));
+        }
+        // SAFETY: zero disables this rig's frontend cache for the following read.
+        status(unsafe { raw::rig_set_cache_timeout_ms(handle, raw::HAMLIB_CACHE_ALL, 0) })?;
+        let result = read(self);
+        // SAFETY: the read does not destroy the rig; restore its original policy.
+        let restored = status(unsafe {
+            raw::rig_set_cache_timeout_ms(handle, raw::HAMLIB_CACHE_ALL, previous)
+        });
+        result.and_then(|value| restored.map(|()| value))
+    }
+
     /// Set integer-hertz frequency on the currently selected receive VFO.
     pub fn set_frequency(&mut self, hertz: u64) -> Result<(), Error> {
         if hertz == 0 || hertz > (1_u64 << 53) {
@@ -185,6 +207,10 @@ impl Rig {
 
     /// Read integer-hertz receive frequency without silently truncating a native value.
     pub fn frequency(&mut self) -> Result<u64, Error> {
+        self.fresh_read(Self::frequency_native)
+    }
+
+    fn frequency_native(&mut self) -> Result<u64, Error> {
         let handle = self.pointer()?;
         let mut frequency = 0.0;
         // SAFETY: the owner provides a complete writable frequency result.
@@ -219,11 +245,22 @@ impl Rig {
 
     /// Return the rig's PTT observation, not a cached key intent.
     pub fn ptt(&mut self) -> Result<bool, Error> {
+        if !self.ptt_observable()? {
+            return Err(Error::InvalidState);
+        }
+        self.fresh_read(Self::ptt_native)
+    }
+
+    fn ptt_native(&mut self) -> Result<bool, Error> {
         let handle = self.pointer()?;
         let mut keyed = raw::RIG_PTT_OFF;
         // SAFETY: the current owner supplies the writable native enum.
         status(unsafe { raw::rig_get_ptt(handle, raw::RPTADV_VFO_CURRENT, &mut keyed) })?;
-        Ok(keyed != raw::RIG_PTT_OFF)
+        match keyed {
+            raw::RIG_PTT_OFF => Ok(false),
+            raw::RIG_PTT_ON | raw::RIG_PTT_ON_MIC | raw::RIG_PTT_ON_DATA => Ok(true),
+            _ => Err(Error::InvalidState),
+        }
     }
 
     /// Stop this adapter's PTT, close transport, then release frontend state.

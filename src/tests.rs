@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn hamlib_fresh_read_restores_cache_after_success_and_failure() {
+    let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    let handle = rig.pointer().unwrap();
+    // SAFETY: this test retains the sole live rig owner.
+    let before = unsafe { raw::rig_get_cache_timeout_ms(handle, raw::HAMLIB_CACHE_ALL) };
+    assert!(before >= 0);
+    for result in [Ok(42), Err(Error::InvalidState)] {
+        assert_eq!(
+            rig.fresh_read(|owner| {
+                let handle = owner.pointer()?;
+                // SAFETY: same live owner; only the cache policy is inspected.
+                assert_eq!(
+                    unsafe { raw::rig_get_cache_timeout_ms(handle, raw::HAMLIB_CACHE_ALL) },
+                    0
+                );
+                result
+            }),
+            result
+        );
+        // SAFETY: the owner and native cache remain live.
+        assert_eq!(
+            unsafe { raw::rig_get_cache_timeout_ms(handle, raw::HAMLIB_CACHE_ALL) },
+            before
+        );
+    }
+}
+
+#[test]
 fn hamlib_offset_capability_requires_shift_and_magnitude_operations() {
     let capability = |missing| {
         crate::catalog::operation_capabilities(
@@ -55,7 +83,17 @@ fn hamlib_catalog_declares_value_types_and_units() {
 
 #[test]
 fn hamlib_dummy_supports_typed_roundtrip() {
-    let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    let mut absent = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    absent.set_ptt(true).unwrap();
+    assert_eq!(absent.ptt(), Err(Error::InvalidState));
+    assert!(
+        !absent
+            .catalog()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.setting == Setting::Ptt && entry.readable)
+    );
+    let mut rig = Rig::open("RIG_MODEL_DUMMY", &[("ptt_type", "RIG")]).unwrap();
     rig.set_frequency(146_520_000).unwrap();
     assert_eq!(rig.frequency().unwrap(), 146_520_000);
     rig.set_ptt(true).unwrap();

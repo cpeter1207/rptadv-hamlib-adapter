@@ -455,6 +455,30 @@ impl Rig {
         unsafe { state.as_ref() }.ok_or(Error::InvalidState)
     }
 
+    /// A real backend or selected hardware-line getter is required; the
+    /// frontend's cached transmit intent is not a physical PTT observation.
+    pub(crate) fn ptt_observable(&self) -> Result<bool, Error> {
+        // SAFETY: this is the selected port owned by the live rig; configuration
+        // updates this union, not rig_state's legacy ptt_type field.
+        let port = unsafe { raw::rig_data_pointer(self.pointer()?, raw::RIG_PTRX_PTTPORT) }
+            .cast::<raw::hamlib_port_t>();
+        // SAFETY: a live initialized rig owns a complete public port record.
+        let port = unsafe { port.as_ref() }.ok_or(Error::InvalidState)?;
+        // SAFETY: PTTPORT selects the ptt member of the public port union.
+        let selected = unsafe { port.type_.ptt };
+        Ok(match selected {
+            raw::RIG_PTT_RIG | raw::RIG_PTT_RIG_MICDATA => {
+                // SAFETY: immutable model capabilities outlive this rig owner.
+                unsafe { raw::rig_get_caps(self.model).as_ref() }
+                    .is_some_and(|caps| caps.get_ptt.is_some())
+            }
+            // A closed shared serial PTT port makes Hamlib assume OFF.
+            raw::RIG_PTT_SERIAL_DTR | raw::RIG_PTT_SERIAL_RTS => port.fd >= 0,
+            raw::RIG_PTT_PARALLEL => true,
+            _ => false,
+        })
+    }
+
     /// Copy available typed controls. Unsupported operations are absent, not cached success.
     pub fn catalog(&self) -> Result<Vec<SettingInfo>, Error> {
         let handle = self.pointer()?;
@@ -472,6 +496,9 @@ impl Rig {
                     };
                     let (mut readable, writable) =
                         operation_capabilities(setting, read, write, has);
+                    if setting == Setting::Ptt {
+                        readable = self.ptt_observable()?;
+                    }
                     if matches!(setting, Setting::SplitMode | Setting::SplitBandwidth) {
                         // Hamlib 4.6 has no GET_SPLIT_MODE function selector.
                         // SAFETY: the loaded model's immutable public caps live with Hamlib.
@@ -739,6 +766,10 @@ impl Rig {
     /// Read absolute power from the actual RFPOWER control using effective TX
     /// frequency/mode supplied by the owner, which may differ from its RX VFO.
     pub fn get_power_mw(&mut self, transmit_hz: u64, mode: i64) -> Result<u32, Error> {
+        self.fresh_read(|owner| owner.get_power_native(transmit_hz, mode))
+    }
+
+    fn get_power_native(&mut self, transmit_hz: u64, mode: i64) -> Result<u32, Error> {
         if transmit_hz == 0
             || transmit_hz > 1_u64 << 53
             || !self
@@ -947,6 +978,10 @@ impl Rig {
 
     /// Read one actual typed scalar. Native errors remain failures, never intent echoes.
     pub fn get(&mut self, setting: Setting) -> Result<i64, Error> {
+        self.fresh_read(|owner| owner.get_native(setting))
+    }
+
+    fn get_native(&mut self, setting: Setting) -> Result<i64, Error> {
         if !self
             .catalog()?
             .iter()
