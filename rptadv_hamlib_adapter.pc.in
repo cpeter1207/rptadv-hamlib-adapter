@@ -1,0 +1,10 @@
+prefix=@PREFIX@
+libdir=@LIBDIR@
+includedir=${prefix}/include
+abi_version=@ABI_VERSION@
+
+Name: rptadv_hamlib_adapter
+Description: Typed Hamlib radio-control dependency adapter
+Version: @VERSION@
+Libs: -L${libdir} -lrptadv_hamlib_adapter
+Cflags: -I${includedir}
