@@ -146,8 +146,22 @@ fn hamlib_runtime_coverage_is_owned_per_connection() {
     let receive = rig.coverage(false).unwrap();
     assert!(receive.iter().any(|range| range.minimum_hz <= 146_520_000
         && range.maximum_hz >= 146_520_000
-        && range.modes & 1 != 0));
+        && range.modes & 2 != 0));
     assert!(!rig.coverage(true).unwrap().is_empty());
+    let declared = rig
+        .catalog()
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.setting == Setting::Mode)
+        .unwrap()
+        .choices
+        .into_iter()
+        .fold(0_u64, |bits, selector| bits | (1_u64 << selector));
+    let covered = receive.iter().fold(0_u64, |bits, range| bits | range.modes);
+    assert_eq!(
+        covered, declared,
+        "shared masks shift by the mode selector, reserving bit zero"
+    );
 }
 
 #[test]

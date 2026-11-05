@@ -119,7 +119,7 @@ enum Native {
     Function(&'static CStr),
 }
 
-/// One negotiated rig coverage interval; mode bits use shared selectors minus one.
+/// One negotiated rig coverage interval; masks reserve bit zero and shift by selector.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Coverage {
     /// Inclusive integer-hertz lower bound.
@@ -325,7 +325,7 @@ impl Rig {
             }
             let modes = (1..=12)
                 .filter(|selector| native_mode(*selector).is_ok_and(|mode| range.modes & mode != 0))
-                .fold(0, |bits, selector| bits | (1 << (selector - 1)));
+                .fold(0, |bits, selector| bits | (1 << selector));
             result.push(Coverage {
                 minimum_hz: range.startf.ceil() as u64,
                 maximum_hz: range.endf.floor() as u64,

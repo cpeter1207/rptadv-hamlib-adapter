@@ -77,7 +77,7 @@ typedef struct rptadv_hamlib_range {
     size_t struct_size; /**< Exact caller-supplied record size. */
     uint64_t minimum_hz; /**< Inclusive receive/transmit base frequency. */
     uint64_t maximum_hz; /**< Inclusive upper frequency. */
-    uint64_t modes; /**< Bit selector-minus-one for each shared mode. */
+    uint64_t modes; /**< One shifted by each shared mode selector; bit zero reserved. */
     int32_t minimum_power_mw; /**< Native bound; negative means unspecified. */
     int32_t maximum_power_mw; /**< Native bound; negative means unspecified. */
 } rptadv_hamlib_range;
