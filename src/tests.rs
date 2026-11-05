@@ -121,6 +121,23 @@ fn hamlib_complete_writes_take_their_companion_state_from_the_caller() {
 }
 
 #[test]
+fn hamlib_split_mode_and_power_use_the_transmit_context() {
+    let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
+    rig.set_frequency(146520000).unwrap();
+    rig.set_split_vfos(1, true, 2).unwrap();
+    rig.set(Setting::TransmitFrequency, 435000000).unwrap();
+    rig.set_mode_width(1, 15000).unwrap();
+    rig.set_split_mode_width(3, 2400).unwrap();
+    assert_eq!(rig.get(Setting::SplitMode), Ok(3));
+    assert_eq!(rig.get(Setting::SplitBandwidth), Ok(2400));
+    rig.set_power_mw(5000, 435000000, 3).unwrap();
+    assert!(rig.get_power_mw(435000000, 3).unwrap() > 0);
+    assert!(rig.get_power_mw(0, 3).is_err());
+    assert!(rig.get_power_mw(435000000, 99).is_err());
+    assert!(rig.set_split_mode_width(99, 2400).is_err());
+}
+
+#[test]
 fn hamlib_rejects_unsupported_capability_before_mutation() {
     let mut rig = Rig::open("RIG_MODEL_DUMMY", &[]).unwrap();
     rig.set_frequency(146_520_000).unwrap();

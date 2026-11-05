@@ -101,6 +101,8 @@ pub struct Api {
     set_mode_width: unsafe extern "C" fn(*mut c_void, i64, u32) -> i32,
     set_split_vfos: unsafe extern "C" fn(*mut c_void, i64, u32, i64) -> i32,
     set_power_mw: unsafe extern "C" fn(*mut c_void, u32, u64, i64) -> i32,
+    set_split_mode_width: unsafe extern "C" fn(*mut c_void, i64, u32) -> i32,
+    get_power_mw: unsafe extern "C" fn(*mut c_void, u64, i64, *mut u32) -> i32,
 }
 
 // SAFETY: descriptor and pointed-to name are immutable for the DSO lifetime.
@@ -312,6 +314,27 @@ unsafe extern "C" fn set_split_vfos(
         unsafe { owner(context)? }.set_split_vfos(receive, enabled != 0, transmit)
     })())
 }
+unsafe extern "C" fn set_split_mode_width(context: *mut c_void, mode: i64, width: u32) -> i32 {
+    code((|| {
+        unsafe { owner(context)? }.set_split_mode_width(mode, width)
+    })())
+}
+unsafe extern "C" fn get_power_mw(
+    context: *mut c_void,
+    transmit_hz: u64,
+    mode: i64,
+    out: *mut u32,
+) -> i32 {
+    if !aligned(out) {
+        return -1003;
+    }
+    code((|| {
+        let value = unsafe { owner(context)? }.get_power_mw(transmit_hz, mode)?;
+        // SAFETY: the caller supplies one aligned writable scalar.
+        unsafe { out.write(value) };
+        Ok(())
+    })())
+}
 unsafe extern "C" fn set_power_mw(
     context: *mut c_void,
     power: u32,
@@ -374,6 +397,8 @@ static API: Api = Api {
     set_mode_width,
     set_split_vfos,
     set_power_mw,
+    set_split_mode_width,
+    get_power_mw,
 };
 
 /// Borrow the immutable ABI-1 descriptor while this shared object remains loaded.

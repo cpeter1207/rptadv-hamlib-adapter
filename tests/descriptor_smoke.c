@@ -26,6 +26,11 @@ int main(void) {
   assert(api->set_split_vfos(rig, 1, 1, 2) == 0);
   assert(api->set_split_vfos(rig, 1, 2, 2) < 0);
   assert(api->set_power_mw(rig, 5000, 146520000, 1) == 0);
+  assert(api->set_split_mode_width(rig, 3, 2400) == 0);
+  assert(api->get(rig, RPTADV_HAMLIB_SPLIT_MODE, &value) == 0 && value == 3);
+  uint32_t power_mw = 0;
+  assert(api->get_power_mw(rig, 146520000, 3, &power_mw) == 0 && power_mw > 0);
+  assert(api->get_power_mw(rig, 146520000, 3, NULL) < 0);
   assert(api->get(rig, RPTADV_HAMLIB_MODE, &value) == 0 && value == 3);
   assert(api->set(rig, 0xffffffffU, 1) < 0);
   rptadv_hamlib_setting entry = {.struct_size = sizeof(entry)};

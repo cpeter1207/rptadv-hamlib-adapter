@@ -45,6 +45,10 @@ pub enum Setting {
     Ptt = 20,
     /// Rig carrier-detect observation.
     CarrierDetect = 21,
+    /// Transmit mode for split-VFO operation.
+    SplitMode = 22,
+    /// Transmit passband for split-VFO operation, in hertz.
+    SplitBandwidth = 23,
     /// AF gain in millionths of the rig control's full scale.
     AfGain = 100,
     /// RF gain in millionths.
@@ -218,6 +222,8 @@ const SETTINGS: &[Setting] = &[
     Setting::ReceiveToneEnabled,
     Setting::Ptt,
     Setting::CarrierDetect,
+    Setting::SplitMode,
+    Setting::SplitBandwidth,
     Setting::AfGain,
     Setting::RfGain,
     Setting::MicrophoneGain,
@@ -250,14 +256,18 @@ impl Setting {
             Self::ReceiveFrequency
             | Self::TransmitFrequency
             | Self::Bandwidth
+            | Self::SplitBandwidth
             | Self::NotchFrequency => (K::Unsigned, U::Hertz),
             Self::Offset | Self::Rit | Self::Xit | Self::IfShift => (K::Signed, U::Hertz),
             Self::Power => (K::Unsigned, U::Milliwatts),
             Self::TransmitCtcss | Self::ReceiveCtcss => (K::Decimal, U::Hertz),
             Self::TransmitDcs | Self::ReceiveDcs => (K::Unsigned, U::DcsCode),
-            Self::Mode | Self::ReceiveVfo | Self::TransmitVfo | Self::Agc | Self::Antenna => {
-                (K::Enumeration, U::None)
-            }
+            Self::Mode
+            | Self::SplitMode
+            | Self::ReceiveVfo
+            | Self::TransmitVfo
+            | Self::Agc
+            | Self::Antenna => (K::Enumeration, U::None),
             Self::Preamp | Self::Attenuator => (K::Unsigned, U::Decibels),
             Self::KeyerSpeed => (K::Unsigned, U::WordsPerMinute),
             Self::AfGain
@@ -298,6 +308,7 @@ impl Setting {
             Self::ReceiveFrequency => O(RIG_FUNCTION_GET_FREQ, RIG_FUNCTION_SET_FREQ),
             Self::TransmitFrequency => O(RIG_FUNCTION_GET_SPLIT_FREQ, RIG_FUNCTION_SET_SPLIT_FREQ),
             Self::Mode | Self::Bandwidth => O(RIG_FUNCTION_GET_MODE, RIG_FUNCTION_SET_MODE),
+            Self::SplitMode | Self::SplitBandwidth => O(u32::MAX, RIG_FUNCTION_SET_SPLIT_MODE),
             Self::ReceiveVfo => O(RIG_FUNCTION_GET_VFO, RIG_FUNCTION_SET_VFO),
             Self::TransmitVfo | Self::Split => {
                 O(RIG_FUNCTION_GET_SPLIT_VFO, RIG_FUNCTION_SET_SPLIT_VFO)
@@ -446,6 +457,7 @@ impl Rig {
 
     /// Copy available typed controls. Unsupported operations are absent, not cached success.
     pub fn catalog(&self) -> Result<Vec<SettingInfo>, Error> {
+        let handle = self.pointer()?;
         let state = self.native_state()?;
         let mut result = Vec::new();
         for setting in SETTINGS.iter().copied() {
@@ -458,7 +470,21 @@ impl Rig {
                             && !unsafe { raw::rig_get_function_ptr(self.model, operation) }
                                 .is_null()
                     };
-                    let (readable, writable) = operation_capabilities(setting, read, write, has);
+                    let (mut readable, writable) =
+                        operation_capabilities(setting, read, write, has);
+                    if matches!(setting, Setting::SplitMode | Setting::SplitBandwidth) {
+                        // Hamlib 4.6 has no GET_SPLIT_MODE function selector.
+                        // SAFETY: the loaded model's immutable public caps live with Hamlib.
+                        readable = unsafe { raw::rig_get_caps(self.model).as_ref() }
+                            .is_some_and(|caps| {
+                                (caps.get_split_mode.is_some() || caps.get_mode.is_some())
+                                    && (caps.targetable_vfo & raw::RIG_TARGETABLE_MODE as i32 != 0
+                                        || caps.set_vfo.is_some()
+                                        || caps.vfo_op.is_some()
+                                            // SAFETY: the retained live owner only queries capabilities.
+                                            && unsafe { raw::rig_has_vfo_op(handle, raw::RIG_OP_TOGGLE) } != 0)
+                            });
+                    }
                     (readable, writable, false)
                 }
                 Native::Level(name, normalized) => {
@@ -483,9 +509,9 @@ impl Rig {
             }
             let (mut minimum, mut maximum) = match setting {
                 Setting::ReceiveFrequency | Setting::TransmitFrequency => (1, 1_i64 << 53),
-                Setting::Mode => (1, 12),
+                Setting::Mode | Setting::SplitMode => (1, 12),
                 Setting::ReceiveVfo | Setting::TransmitVfo => (0, 5),
-                Setting::Bandwidth => (0, i32::MAX as i64),
+                Setting::Bandwidth | Setting::SplitBandwidth => (0, i32::MAX as i64),
                 Setting::Rit => (-state.max_rit, state.max_rit),
                 Setting::Xit => (-state.max_xit, state.max_xit),
                 Setting::Power => (0, u32::MAX as i64),
@@ -531,7 +557,7 @@ impl Rig {
                 }
             }
             let choices = match setting {
-                Setting::Mode => (1..=12)
+                Setting::Mode | Setting::SplitMode => (1..=12)
                     .filter(|value| {
                         native_mode(*value).is_ok_and(|mode| state.mode_list & mode != 0)
                     })
@@ -587,6 +613,8 @@ impl Rig {
                     Setting::TransmitFrequency => "transmit_hz",
                     Setting::Mode => "mode",
                     Setting::Bandwidth => "bandwidth_hz",
+                    Setting::SplitMode => "split_mode",
+                    Setting::SplitBandwidth => "split_bandwidth_hz",
                     Setting::ReceiveVfo => "receive_vfo",
                     Setting::TransmitVfo => "transmit_vfo",
                     Setting::Split => "split",
@@ -684,6 +712,64 @@ impl Rig {
         })
     }
 
+    /// Set the split transmit mode only after the owner has safely unkeyed and
+    /// enabled the intended split routing. Hamlib may otherwise enable split or
+    /// skip a mode write while PTT is active.
+    pub fn set_split_mode_width(&mut self, mode: i64, width: u32) -> Result<(), Error> {
+        self.validate_value(Setting::SplitMode, mode)?;
+        self.validate_value(Setting::SplitBandwidth, i64::from(width))?;
+        let handle = self.pointer()?;
+        let mode = native_mode(mode)?;
+        // SAFETY: the unique physical owner supplies an admitted mode/passband.
+        unsafe {
+            let width = if width == 0 {
+                raw::rig_passband_normal(handle, mode)
+            } else {
+                i64::from(width)
+            };
+            status(raw::rig_set_split_mode(
+                handle,
+                raw::RPTADV_VFO_CURRENT,
+                mode,
+                width,
+            ))
+        }
+    }
+
+    /// Read absolute power from the actual RFPOWER control using effective TX
+    /// frequency/mode supplied by the owner, which may differ from its RX VFO.
+    pub fn get_power_mw(&mut self, transmit_hz: u64, mode: i64) -> Result<u32, Error> {
+        if transmit_hz == 0
+            || transmit_hz > 1_u64 << 53
+            || !self
+                .catalog()?
+                .iter()
+                .any(|entry| entry.setting == Setting::Power && entry.readable)
+        {
+            return Err(Error::InvalidState);
+        }
+        let handle = self.pointer()?;
+        let mode = native_mode(mode)?;
+        let (mut value, mut power) = (raw::value_t { f: 0.0 }, 0);
+        // SAFETY: the sole owner retains the rig; all outputs are complete stack values.
+        unsafe {
+            status(raw::rig_get_level(
+                handle,
+                raw::RPTADV_VFO_CURRENT,
+                raw::rig_parse_level(c"RFPOWER".as_ptr()),
+                &mut value,
+            ))?;
+            status(raw::rig_power2mW(
+                handle,
+                &mut power,
+                value.f,
+                transmit_hz as f64,
+                mode,
+            ))?;
+        }
+        Ok(power)
+    }
+
     /// Convert absolute RF power using the caller's effective TX frequency/mode.
     /// This does not fabricate readback or use the possibly different RX frequency.
     pub fn set_power_mw(&mut self, power: u32, transmit_hz: u64, mode: i64) -> Result<(), Error> {
@@ -768,6 +854,24 @@ impl Rig {
                                 mode
                             },
                             if setting == Setting::Bandwidth {
+                                value as _
+                            } else {
+                                width
+                            },
+                        ))
+                    }
+                    Setting::SplitMode | Setting::SplitBandwidth => {
+                        let (mut mode, mut width) = (0, 0);
+                        status(raw::rig_get_split_mode(handle, vfo, &mut mode, &mut width))?;
+                        status(raw::rig_set_split_mode(
+                            handle,
+                            vfo,
+                            if setting == Setting::SplitMode {
+                                native_mode(value)?
+                            } else {
+                                mode
+                            },
+                            if setting == Setting::SplitBandwidth {
                                 value as _
                             } else {
                                 width
@@ -911,6 +1015,15 @@ impl Rig {
                         let (mut mode, mut width) = (0, 0);
                         status(raw::rig_get_mode(handle, vfo, &mut mode, &mut width))?;
                         if setting == Setting::Mode {
+                            mode_selector(mode)
+                        } else {
+                            Ok(width)
+                        }
+                    }
+                    Setting::SplitMode | Setting::SplitBandwidth => {
+                        let (mut mode, mut width) = (0, 0);
+                        status(raw::rig_get_split_mode(handle, vfo, &mut mode, &mut width))?;
+                        if setting == Setting::SplitMode {
                             mode_selector(mode)
                         } else {
                             Ok(width)
