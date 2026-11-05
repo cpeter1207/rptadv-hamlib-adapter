@@ -158,9 +158,100 @@ pub struct SettingInfo {
 
 #[derive(Clone, Copy)]
 enum Native {
-    Operation(raw::rig_function_e, raw::rig_function_e),
+    Operation(Operation),
     Level(&'static CStr, bool),
     Function(&'static CStr),
+    CarrierDetect,
+}
+
+/// Only controls with an actual write operation can enter the setter dispatch.
+#[derive(Clone, Copy)]
+enum Writable {
+    Operation(Operation),
+    Level(&'static CStr, bool),
+    Function(&'static CStr),
+}
+
+/// Finite direct operations exclude levels, functions and read-only carrier state.
+#[derive(Clone, Copy)]
+enum Operation {
+    ReceiveFrequency,
+    TransmitFrequency,
+    Mode,
+    Bandwidth,
+    SplitMode,
+    SplitBandwidth,
+    ReceiveVfo,
+    TransmitVfo,
+    Split,
+    Offset,
+    Rit,
+    Xit,
+    TransmitCtcss,
+    ReceiveCtcss,
+    TransmitDcs,
+    ReceiveDcs,
+    Ptt,
+    Antenna,
+}
+
+impl Operation {
+    /// Stable name and the two installed Hamlib capability selectors.
+    fn metadata(self) -> (&'static str, raw::rig_function_e, raw::rig_function_e) {
+        use raw::*;
+        match self {
+            Self::ReceiveFrequency => ("receive_hz", RIG_FUNCTION_GET_FREQ, RIG_FUNCTION_SET_FREQ),
+            Self::TransmitFrequency => (
+                "transmit_hz",
+                RIG_FUNCTION_GET_SPLIT_FREQ,
+                RIG_FUNCTION_SET_SPLIT_FREQ,
+            ),
+            Self::Mode => ("mode", RIG_FUNCTION_GET_MODE, RIG_FUNCTION_SET_MODE),
+            Self::Bandwidth => ("bandwidth_hz", RIG_FUNCTION_GET_MODE, RIG_FUNCTION_SET_MODE),
+            Self::SplitMode => ("split_mode", u32::MAX, RIG_FUNCTION_SET_SPLIT_MODE),
+            Self::SplitBandwidth => ("split_bandwidth_hz", u32::MAX, RIG_FUNCTION_SET_SPLIT_MODE),
+            Self::ReceiveVfo => ("receive_vfo", RIG_FUNCTION_GET_VFO, RIG_FUNCTION_SET_VFO),
+            Self::TransmitVfo => (
+                "transmit_vfo",
+                RIG_FUNCTION_GET_SPLIT_VFO,
+                RIG_FUNCTION_SET_SPLIT_VFO,
+            ),
+            Self::Split => (
+                "split",
+                RIG_FUNCTION_GET_SPLIT_VFO,
+                RIG_FUNCTION_SET_SPLIT_VFO,
+            ),
+            Self::Offset => (
+                "offset_hz",
+                RIG_FUNCTION_GET_RPTR_OFFS,
+                RIG_FUNCTION_SET_RPTR_OFFS,
+            ),
+            Self::Rit => ("rit_hz", RIG_FUNCTION_GET_RIT, RIG_FUNCTION_SET_RIT),
+            Self::Xit => ("xit_hz", RIG_FUNCTION_GET_XIT, RIG_FUNCTION_SET_XIT),
+            Self::TransmitCtcss => (
+                "encode_ctcss",
+                RIG_FUNCTION_GET_CTCSS_TONE,
+                RIG_FUNCTION_SET_CTCSS_TONE,
+            ),
+            Self::ReceiveCtcss => (
+                "decode_ctcss",
+                RIG_FUNCTION_GET_CTCSS_SQL,
+                RIG_FUNCTION_SET_CTCSS_SQL,
+            ),
+            Self::TransmitDcs => (
+                "encode_dcs",
+                RIG_FUNCTION_GET_DCS_CODE,
+                RIG_FUNCTION_SET_DCS_CODE,
+            ),
+            Self::ReceiveDcs => (
+                "decode_dcs",
+                RIG_FUNCTION_GET_DCS_SQL,
+                RIG_FUNCTION_SET_DCS_SQL,
+            ),
+            Self::Ptt => ("ptt", RIG_FUNCTION_GET_PTT, RIG_FUNCTION_SET_PTT),
+            Self::Antenna => ("antenna", RIG_FUNCTION_GET_ANT, RIG_FUNCTION_SET_ANT),
+        }
+    }
 }
 
 pub(crate) fn operation_capabilities(
@@ -303,28 +394,29 @@ impl Setting {
 
     fn native(self) -> Native {
         use Native::{Function as F, Level as L, Operation as O};
-        use raw::*;
         match self {
-            Self::ReceiveFrequency => O(RIG_FUNCTION_GET_FREQ, RIG_FUNCTION_SET_FREQ),
-            Self::TransmitFrequency => O(RIG_FUNCTION_GET_SPLIT_FREQ, RIG_FUNCTION_SET_SPLIT_FREQ),
-            Self::Mode | Self::Bandwidth => O(RIG_FUNCTION_GET_MODE, RIG_FUNCTION_SET_MODE),
-            Self::SplitMode | Self::SplitBandwidth => O(u32::MAX, RIG_FUNCTION_SET_SPLIT_MODE),
-            Self::ReceiveVfo => O(RIG_FUNCTION_GET_VFO, RIG_FUNCTION_SET_VFO),
-            Self::TransmitVfo | Self::Split => {
-                O(RIG_FUNCTION_GET_SPLIT_VFO, RIG_FUNCTION_SET_SPLIT_VFO)
-            }
-            Self::Offset => O(RIG_FUNCTION_GET_RPTR_OFFS, RIG_FUNCTION_SET_RPTR_OFFS),
-            Self::Rit => O(RIG_FUNCTION_GET_RIT, RIG_FUNCTION_SET_RIT),
-            Self::Xit => O(RIG_FUNCTION_GET_XIT, RIG_FUNCTION_SET_XIT),
+            Self::ReceiveFrequency => O(Operation::ReceiveFrequency),
+            Self::TransmitFrequency => O(Operation::TransmitFrequency),
+            Self::Mode => O(Operation::Mode),
+            Self::Bandwidth => O(Operation::Bandwidth),
+            Self::SplitMode => O(Operation::SplitMode),
+            Self::SplitBandwidth => O(Operation::SplitBandwidth),
+            Self::ReceiveVfo => O(Operation::ReceiveVfo),
+            Self::TransmitVfo => O(Operation::TransmitVfo),
+            Self::Split => O(Operation::Split),
+            Self::Offset => O(Operation::Offset),
+            Self::Rit => O(Operation::Rit),
+            Self::Xit => O(Operation::Xit),
+            Self::TransmitCtcss => O(Operation::TransmitCtcss),
+            Self::ReceiveCtcss => O(Operation::ReceiveCtcss),
+            Self::TransmitDcs => O(Operation::TransmitDcs),
+            Self::ReceiveDcs => O(Operation::ReceiveDcs),
+            Self::Ptt => O(Operation::Ptt),
+            Self::Antenna => O(Operation::Antenna),
+            Self::CarrierDetect => Native::CarrierDetect,
             Self::Power => L(c"RFPOWER", true),
-            Self::TransmitCtcss => O(RIG_FUNCTION_GET_CTCSS_TONE, RIG_FUNCTION_SET_CTCSS_TONE),
-            Self::ReceiveCtcss => O(RIG_FUNCTION_GET_CTCSS_SQL, RIG_FUNCTION_SET_CTCSS_SQL),
-            Self::TransmitDcs => O(RIG_FUNCTION_GET_DCS_CODE, RIG_FUNCTION_SET_DCS_CODE),
-            Self::ReceiveDcs => O(RIG_FUNCTION_GET_DCS_SQL, RIG_FUNCTION_SET_DCS_SQL),
             Self::TransmitToneEnabled => F(c"TONE"),
             Self::ReceiveToneEnabled => F(c"TSQL"),
-            Self::Ptt => O(RIG_FUNCTION_GET_PTT, RIG_FUNCTION_SET_PTT),
-            Self::CarrierDetect => O(RIG_FUNCTION_GET_DCD, u32::MAX),
             Self::AfGain => L(c"AF", true),
             Self::RfGain => L(c"RF", true),
             Self::MicrophoneGain => L(c"MICGAIN", true),
@@ -337,7 +429,6 @@ impl Setting {
             Self::NoiseReductionLevel => L(c"NR", true),
             Self::NotchFrequency => L(c"NOTCHF", false),
             Self::KeyerSpeed => L(c"KEYSPD", false),
-            Self::Antenna => O(RIG_FUNCTION_GET_ANT, RIG_FUNCTION_SET_ANT),
             Self::NoiseBlanker => F(c"NB"),
             Self::NoiseReduction => F(c"NR"),
             Self::AutomaticNotch => F(c"ANF"),
@@ -413,6 +504,44 @@ pub(crate) fn tone_choices(pointer: *const u32, dcs: bool) -> Result<Vec<i64>, E
     Err(Error::InvalidState)
 }
 
+/// Keep physical line observations distinct from frontend cached key intent.
+fn port_ptt_observable(port: &raw::hamlib_port_t, model: u32) -> bool {
+    // SAFETY: this record represents the selected PTT port.
+    match unsafe { port.type_.ptt } {
+        raw::RIG_PTT_RIG | raw::RIG_PTT_RIG_MICDATA => {
+            // SAFETY: immutable registered capabilities outlive a rig owner.
+            unsafe { raw::rig_get_caps(model).as_ref() }.is_some_and(|caps| caps.get_ptt.is_some())
+        }
+        raw::RIG_PTT_SERIAL_DTR | raw::RIG_PTT_SERIAL_RTS => port.fd >= 0,
+        raw::RIG_PTT_PARALLEL => true,
+        _ => false,
+    }
+}
+
+/// A split getter also needs a way to address or select its transmit VFO.
+fn split_mode_readable(caps: &raw::rig_caps, can_toggle: bool) -> bool {
+    (caps.get_split_mode.is_some() || caps.get_mode.is_some())
+        && (caps.targetable_vfo & raw::RIG_TARGETABLE_MODE as i32 != 0
+            || caps.set_vfo.is_some()
+            || caps.vfo_op.is_some() && can_toggle)
+}
+
+/// Convert a finite native full-scale ratio without inventing a level.
+fn normalized_level(value: f32) -> Result<i64, Error> {
+    if !value.is_finite() {
+        return Err(Error::InvalidState);
+    }
+    Ok((value as f64 * 1_000_000.0).round() as i64)
+}
+
+/// Exactly one antenna bit identifies a one-based antenna number.
+fn antenna_number(current: u32) -> Result<i64, Error> {
+    if current == 0 || !current.is_power_of_two() {
+        return Err(Error::InvalidState);
+    }
+    Ok(i64::from(current.trailing_zeros()) + 1)
+}
+
 impl Rig {
     /// Copy actual receive/transmit ranges after this connection's negotiation.
     pub fn coverage(&self, transmit: bool) -> Result<Vec<Coverage>, Error> {
@@ -464,19 +593,7 @@ impl Rig {
             .cast::<raw::hamlib_port_t>();
         // SAFETY: a live initialized rig owns a complete public port record.
         let port = unsafe { port.as_ref() }.ok_or(Error::InvalidState)?;
-        // SAFETY: PTTPORT selects the ptt member of the public port union.
-        let selected = unsafe { port.type_.ptt };
-        Ok(match selected {
-            raw::RIG_PTT_RIG | raw::RIG_PTT_RIG_MICDATA => {
-                // SAFETY: immutable model capabilities outlive this rig owner.
-                unsafe { raw::rig_get_caps(self.model).as_ref() }
-                    .is_some_and(|caps| caps.get_ptt.is_some())
-            }
-            // A closed shared serial PTT port makes Hamlib assume OFF.
-            raw::RIG_PTT_SERIAL_DTR | raw::RIG_PTT_SERIAL_RTS => port.fd >= 0,
-            raw::RIG_PTT_PARALLEL => true,
-            _ => false,
-        })
+        Ok(port_ptt_observable(port, self.model))
     }
 
     /// Copy available typed controls. Unsupported operations are absent, not cached success.
@@ -486,13 +603,12 @@ impl Rig {
         let mut result = Vec::new();
         for setting in SETTINGS.iter().copied() {
             let (readable, writable, normalized) = match setting.native() {
-                Native::Operation(read, write) => {
+                Native::Operation(operation) => {
+                    let (_, read, write) = operation.metadata();
                     // SAFETY: model comes from installed headers. These pointers
                     // are capability hints only; every operation checks its result.
                     let has = |operation| {
-                        operation != u32::MAX
-                            && !unsafe { raw::rig_get_function_ptr(self.model, operation) }
-                                .is_null()
+                        !unsafe { raw::rig_get_function_ptr(self.model, operation) }.is_null()
                     };
                     let (mut readable, writable) =
                         operation_capabilities(setting, read, write, has);
@@ -502,31 +618,37 @@ impl Rig {
                     if matches!(setting, Setting::SplitMode | Setting::SplitBandwidth) {
                         // Hamlib 4.6 has no GET_SPLIT_MODE function selector.
                         // SAFETY: the loaded model's immutable public caps live with Hamlib.
-                        readable = unsafe { raw::rig_get_caps(self.model).as_ref() }
-                            .is_some_and(|caps| {
-                                (caps.get_split_mode.is_some() || caps.get_mode.is_some())
-                                    && (caps.targetable_vfo & raw::RIG_TARGETABLE_MODE as i32 != 0
-                                        || caps.set_vfo.is_some()
-                                        || caps.vfo_op.is_some()
-                                            // SAFETY: the retained live owner only queries capabilities.
-                                            && unsafe { raw::rig_has_vfo_op(handle, raw::RIG_OP_TOGGLE) } != 0)
+                        readable =
+                            unsafe { raw::rig_get_caps(self.model).as_ref() }.is_some_and(|caps| {
+                                // SAFETY: the live owner only queries capabilities.
+                                split_mode_readable(
+                                    caps,
+                                    unsafe { raw::rig_has_vfo_op(handle, raw::RIG_OP_TOGGLE) } != 0,
+                                )
                             });
                     }
                     (readable, writable, false)
                 }
+                Native::CarrierDetect => (
+                    // SAFETY: this only inspects the installed model's getter.
+                    !unsafe { raw::rig_get_function_ptr(self.model, raw::RIG_FUNCTION_GET_DCD) }
+                        .is_null(),
+                    false,
+                    false,
+                ),
                 Native::Level(name, normalized) => {
                     let level = unsafe { raw::rig_parse_level(name.as_ptr()) };
                     (
-                        level != 0 && state.has_get_level & level != 0,
-                        level != 0 && state.has_set_level & level != 0,
+                        state.has_get_level & level != 0,
+                        state.has_set_level & level != 0,
                         normalized && setting != Setting::Power,
                     )
                 }
                 Native::Function(name) => {
                     let function = unsafe { raw::rig_parse_func(name.as_ptr()) };
                     (
-                        function != 0 && state.has_get_func & function != 0,
-                        function != 0 && state.has_set_func & function != 0,
+                        state.has_get_func & function != 0,
+                        state.has_set_func & function != 0,
                         false,
                     )
                 }
@@ -560,27 +682,21 @@ impl Rig {
             if let Native::Level(name, normalized) = setting.native() {
                 let level = unsafe { raw::rig_parse_level(name.as_ptr()) };
                 let index = unsafe { raw::rig_setting2idx(level) };
-                if let Some(granularity) = usize::try_from(index)
-                    .ok()
-                    .and_then(|index| state.level_gran.get(index))
-                {
-                    // SAFETY: the catalog fixes each native level's active union member.
-                    let (low, high) = unsafe {
-                        if normalized {
-                            (granularity.min.f as f64, granularity.max.f as f64)
-                        } else {
-                            (granularity.min.i as f64, granularity.max.i as f64)
-                        }
-                    };
-                    if setting != Setting::Power
-                        && low.is_finite()
-                        && high.is_finite()
-                        && high > low
-                    {
-                        let scale = if normalized { 1_000_000.0 } else { 1.0 };
-                        minimum = (low * scale).ceil() as i64;
-                        maximum = (high * scale).floor() as i64;
+                // Closed catalog names resolve to installed Hamlib level bits;
+                // their indices always address this public granularity array.
+                let granularity = &state.level_gran[index as usize];
+                // SAFETY: the catalog fixes each native level's active union member.
+                let (low, high) = unsafe {
+                    if normalized {
+                        (granularity.min.f as f64, granularity.max.f as f64)
+                    } else {
+                        (granularity.min.i as f64, granularity.max.i as f64)
                     }
+                };
+                if setting != Setting::Power && low.is_finite() && high.is_finite() && high > low {
+                    let scale = if normalized { 1_000_000.0 } else { 1.0 };
+                    minimum = (low * scale).ceil() as i64;
+                    maximum = (high * scale).floor() as i64;
                 }
             }
             let choices = match setting {
@@ -633,30 +749,10 @@ impl Rig {
             };
             let name = match setting.native() {
                 Native::Level(name, _) | Native::Function(name) => {
-                    name.to_str().map_err(|_| Error::InvalidState)?
+                    name.to_str().expect("closed ASCII catalog name")
                 }
-                _ => match setting {
-                    Setting::ReceiveFrequency => "receive_hz",
-                    Setting::TransmitFrequency => "transmit_hz",
-                    Setting::Mode => "mode",
-                    Setting::Bandwidth => "bandwidth_hz",
-                    Setting::SplitMode => "split_mode",
-                    Setting::SplitBandwidth => "split_bandwidth_hz",
-                    Setting::ReceiveVfo => "receive_vfo",
-                    Setting::TransmitVfo => "transmit_vfo",
-                    Setting::Split => "split",
-                    Setting::Offset => "offset_hz",
-                    Setting::Rit => "rit_hz",
-                    Setting::Xit => "xit_hz",
-                    Setting::TransmitCtcss => "encode_ctcss",
-                    Setting::ReceiveCtcss => "decode_ctcss",
-                    Setting::TransmitDcs => "encode_dcs",
-                    Setting::ReceiveDcs => "decode_dcs",
-                    Setting::Ptt => "ptt",
-                    Setting::CarrierDetect => "carrier_detect",
-                    Setting::Antenna => "antenna",
-                    _ => unreachable!(),
-                },
+                Native::Operation(operation) => operation.metadata().0,
+                Native::CarrierDetect => "carrier_detect",
             };
             result.push(SettingInfo {
                 setting,
@@ -680,12 +776,18 @@ impl Rig {
         Ok(result)
     }
 
-    fn validate_value(&self, setting: Setting, value: i64) -> Result<(), Error> {
+    fn validate_value(&self, setting: Setting, value: i64) -> Result<Writable, Error> {
         let info = self
             .catalog()?
             .into_iter()
             .find(|item| item.setting == setting)
             .ok_or(Error::InvalidState)?;
+        let writable = match setting.native() {
+            Native::Operation(operation) => Writable::Operation(operation),
+            Native::Level(name, normalized) => Writable::Level(name, normalized),
+            Native::Function(name) => Writable::Function(name),
+            Native::CarrierDetect => return Err(Error::InvalidState),
+        };
         if !info.writable
             || value < info.minimum
             || value > info.maximum
@@ -693,7 +795,7 @@ impl Rig {
         {
             return Err(Error::InvalidState);
         }
-        Ok(())
+        Ok(writable)
     }
 
     /// Set mode/passband from complete desired state, without requiring readback.
@@ -832,14 +934,14 @@ impl Rig {
     /// Set one scalar. Mode/passband, split and power require readable companion
     /// state; complete-state callers use the grouped operations for write-only rigs.
     pub fn set(&mut self, setting: Setting, value: i64) -> Result<(), Error> {
-        self.validate_value(setting, value)?;
+        let native = self.validate_value(setting, value)?;
         let handle = self.pointer()?;
         let vfo = raw::RPTADV_VFO_CURRENT;
         // SAFETY: all calls use the sole owner and native values validated above;
         // stack out-parameters are complete, and no pointer escapes this call.
         unsafe {
-            match setting.native() {
-                Native::Level(name, normalized) => {
+            match native {
+                Writable::Level(name, normalized) => {
                     let level = raw::rig_parse_level(name.as_ptr());
                     let native = if setting == Setting::Power {
                         let mut power = 0.0;
@@ -862,18 +964,18 @@ impl Rig {
                     };
                     status(raw::rig_set_level(handle, vfo, level, native))
                 }
-                Native::Function(name) => status(raw::rig_set_func(
+                Writable::Function(name) => status(raw::rig_set_func(
                     handle,
                     vfo,
                     raw::rig_parse_func(name.as_ptr()),
                     value as i32,
                 )),
-                Native::Operation(_, _) => match setting {
-                    Setting::ReceiveFrequency => self.set_frequency(value as u64),
-                    Setting::TransmitFrequency => {
+                Writable::Operation(operation) => match operation {
+                    Operation::ReceiveFrequency => self.set_frequency(value as u64),
+                    Operation::TransmitFrequency => {
                         status(raw::rig_set_split_freq(handle, vfo, value as f64))
                     }
-                    Setting::Mode | Setting::Bandwidth => {
+                    Operation::Mode | Operation::Bandwidth => {
                         let (mut mode, mut width) = (0, 0);
                         status(raw::rig_get_mode(handle, vfo, &mut mode, &mut width))?;
                         status(raw::rig_set_mode(
@@ -891,7 +993,7 @@ impl Rig {
                             },
                         ))
                     }
-                    Setting::SplitMode | Setting::SplitBandwidth => {
+                    Operation::SplitMode | Operation::SplitBandwidth => {
                         let (mut mode, mut width) = (0, 0);
                         status(raw::rig_get_split_mode(handle, vfo, &mut mode, &mut width))?;
                         status(raw::rig_set_split_mode(
@@ -909,8 +1011,8 @@ impl Rig {
                             },
                         ))
                     }
-                    Setting::ReceiveVfo => status(raw::rig_set_vfo(handle, native_vfo(value)?)),
-                    Setting::TransmitVfo | Setting::Split => {
+                    Operation::ReceiveVfo => status(raw::rig_set_vfo(handle, native_vfo(value)?)),
+                    Operation::TransmitVfo | Operation::Split => {
                         let (mut split, mut transmit_vfo) = (0, 0);
                         status(raw::rig_get_split_vfo(
                             handle,
@@ -933,7 +1035,7 @@ impl Rig {
                             },
                         ))
                     }
-                    Setting::Offset => {
+                    Operation::Offset => {
                         status(raw::rig_set_rptr_shift(
                             handle,
                             vfo,
@@ -945,32 +1047,31 @@ impl Rig {
                         ))?;
                         status(raw::rig_set_rptr_offs(handle, vfo, value.abs() as _))
                     }
-                    Setting::Rit => status(raw::rig_set_rit(handle, vfo, value as _)),
-                    Setting::Xit => status(raw::rig_set_xit(handle, vfo, value as _)),
-                    Setting::TransmitCtcss => {
+                    Operation::Rit => status(raw::rig_set_rit(handle, vfo, value as _)),
+                    Operation::Xit => status(raw::rig_set_xit(handle, vfo, value as _)),
+                    Operation::TransmitCtcss => {
                         status(raw::rig_set_ctcss_tone(handle, vfo, value as _))
                     }
-                    Setting::ReceiveCtcss => {
+                    Operation::ReceiveCtcss => {
                         status(raw::rig_set_ctcss_sql(handle, vfo, value as _))
                     }
-                    Setting::TransmitDcs => status(raw::rig_set_dcs_code(
+                    Operation::TransmitDcs => status(raw::rig_set_dcs_code(
                         handle,
                         vfo,
                         dcs_to_native(value as u32)?,
                     )),
-                    Setting::ReceiveDcs => status(raw::rig_set_dcs_sql(
+                    Operation::ReceiveDcs => status(raw::rig_set_dcs_sql(
                         handle,
                         vfo,
                         dcs_to_native(value as u32)?,
                     )),
-                    Setting::Ptt => self.set_ptt(value != 0),
-                    Setting::Antenna => status(raw::rig_set_ant(
+                    Operation::Ptt => self.set_ptt(value != 0),
+                    Operation::Antenna => status(raw::rig_set_ant(
                         handle,
                         vfo,
                         1 << (value - 1),
                         raw::value_t { i: 0 },
                     )),
-                    _ => Err(Error::InvalidState),
                 },
             }
         }
@@ -1014,10 +1115,7 @@ impl Rig {
                         ))?;
                         Ok(i64::from(power))
                     } else if normalized {
-                        if !value.f.is_finite() {
-                            return Err(Error::InvalidState);
-                        }
-                        Ok((value.f as f64 * 1_000_000.0).round() as i64)
+                        normalized_level(value.f)
                     } else {
                         Ok(i64::from(value.i))
                     }
@@ -1032,21 +1130,19 @@ impl Rig {
                     ))?;
                     Ok(i64::from(value != 0))
                 }
-                Native::Operation(_, _) => match setting {
-                    Setting::ReceiveFrequency => self.frequency().map(|value| value as i64),
-                    Setting::TransmitFrequency => {
+                Native::CarrierDetect => {
+                    let mut value = 0;
+                    status(raw::rig_get_dcd(handle, vfo, &mut value))?;
+                    Ok(i64::from(value != 0))
+                }
+                Native::Operation(operation) => match operation {
+                    Operation::ReceiveFrequency => self.frequency().map(|value| value as i64),
+                    Operation::TransmitFrequency => {
                         let mut value = 0.0;
                         status(raw::rig_get_split_freq(handle, vfo, &mut value))?;
-                        if !value.is_finite()
-                            || value < 1.0
-                            || value > (1_u64 << 53) as f64
-                            || value.fract() != 0.0
-                        {
-                            return Err(Error::InvalidState);
-                        }
-                        Ok(value as i64)
+                        crate::rig::integer_frequency(value).map(|value| value as i64)
                     }
-                    Setting::Mode | Setting::Bandwidth => {
+                    Operation::Mode | Operation::Bandwidth => {
                         let (mut mode, mut width) = (0, 0);
                         status(raw::rig_get_mode(handle, vfo, &mut mode, &mut width))?;
                         if setting == Setting::Mode {
@@ -1055,7 +1151,7 @@ impl Rig {
                             Ok(width)
                         }
                     }
-                    Setting::SplitMode | Setting::SplitBandwidth => {
+                    Operation::SplitMode | Operation::SplitBandwidth => {
                         let (mut mode, mut width) = (0, 0);
                         status(raw::rig_get_split_mode(handle, vfo, &mut mode, &mut width))?;
                         if setting == Setting::SplitMode {
@@ -1064,12 +1160,12 @@ impl Rig {
                             Ok(width)
                         }
                     }
-                    Setting::ReceiveVfo => {
+                    Operation::ReceiveVfo => {
                         let mut value = 0;
                         status(raw::rig_get_vfo(handle, &mut value))?;
                         vfo_selector(value)
                     }
-                    Setting::TransmitVfo | Setting::Split => {
+                    Operation::TransmitVfo | Operation::Split => {
                         let (mut split, mut value) = (0, 0);
                         status(raw::rig_get_split_vfo(handle, vfo, &mut split, &mut value))?;
                         if setting == Setting::Split {
@@ -1078,7 +1174,7 @@ impl Rig {
                             vfo_selector(value)
                         }
                     }
-                    Setting::Offset => {
+                    Operation::Offset => {
                         let (mut shift, mut value) = (0, 0);
                         status(raw::rig_get_rptr_shift(handle, vfo, &mut shift))?;
                         status(raw::rig_get_rptr_offs(handle, vfo, &mut value))?;
@@ -1090,7 +1186,7 @@ impl Rig {
                             0
                         })
                     }
-                    Setting::Rit | Setting::Xit => {
+                    Operation::Rit | Operation::Xit => {
                         let mut value = 0;
                         status(if setting == Setting::Rit {
                             raw::rig_get_rit(handle, vfo, &mut value)
@@ -1099,10 +1195,10 @@ impl Rig {
                         })?;
                         Ok(value)
                     }
-                    Setting::TransmitCtcss
-                    | Setting::ReceiveCtcss
-                    | Setting::TransmitDcs
-                    | Setting::ReceiveDcs => {
+                    Operation::TransmitCtcss
+                    | Operation::ReceiveCtcss
+                    | Operation::TransmitDcs
+                    | Operation::ReceiveDcs => {
                         let mut value = 0;
                         status(match setting {
                             Setting::TransmitCtcss => {
@@ -1120,13 +1216,8 @@ impl Rig {
                             Ok(i64::from(value))
                         }
                     }
-                    Setting::Ptt => self.ptt().map(i64::from),
-                    Setting::CarrierDetect => {
-                        let mut value = 0;
-                        status(raw::rig_get_dcd(handle, vfo, &mut value))?;
-                        Ok(i64::from(value != 0))
-                    }
-                    Setting::Antenna => {
+                    Operation::Ptt => self.ptt().map(i64::from),
+                    Operation::Antenna => {
                         let (mut option, mut current, mut transmit, mut receive) =
                             (raw::value_t { i: 0 }, 0, 0, 0);
                         status(raw::rig_get_ant(
@@ -1138,14 +1229,14 @@ impl Rig {
                             &mut transmit,
                             &mut receive,
                         ))?;
-                        if current == 0 || !current.is_power_of_two() {
-                            return Err(Error::InvalidState);
-                        }
-                        Ok(i64::from(current.trailing_zeros()) + 1)
+                        antenna_number(current)
                     }
-                    _ => Err(Error::InvalidState),
                 },
             }
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests;
