@@ -1,0 +1,27 @@
+[package]
+name = "rptadv-hamlib-adapter"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-2.0-only"
+description = "Versioned radio-control boundary to released Hamlib"
+publish = false
+
+[lib]
+name = "rptadv_hamlib_adapter"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+bindgen = "0.72.1"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+codegen-units = 1
+debug = 1
+lto = "thin"
+panic = "abort"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
